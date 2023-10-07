@@ -109,3 +109,9 @@ fn check_build_deps() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+fn create_shared_object() -> anyhow::Result<()> {
+    // - [] Get sample shared lib working with old examples
+    // - [] Get it working with rust-installer.sh
+    Ok(())
+}

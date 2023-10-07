@@ -11,3 +11,7 @@
 
 ## To figure out:
  - [] How to uniquely idenitfy a certain target ( app or script ) across installation script/usage
+
+## Good to have:
+
+- [] Figure out a way to enforce your program being used always
