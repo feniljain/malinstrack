@@ -11,12 +11,10 @@ use libc::{self, c_char, c_int, dlsym, RTLD_NEXT};
 
 // Function pointer to open() libc
 type OpenFn = fn(path: *const c_char, oflag: c_int) -> c_int;
+// Function pointer to remove() libc
+type RemoveFn = fn(*const c_char) -> i32;
 // Function pointer to openat() libc
 // type OpenAtFn = extern "C" fn(dirfd: c_int, pathname: *const c_char, flags: c_int, ...) -> c_int;
-
-// TODO:
-// - [] Identify different functions which could be added to tracking
-//      - [] Add hooks for all of them
 
 // Our own custom open function
 #[no_mangle]
@@ -31,6 +29,30 @@ pub unsafe extern "C" fn open(path: *const c_char, oflag: c_int) -> c_int {
     }
 
     call_og_open_fn(path, oflag)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn remove(path: *const c_char) -> c_int {
+    let path_c_str = CStr::from_ptr(path);
+    if valid_path_to_insert(path_c_str) {
+        add_path_to_db(path_c_str);
+    }
+
+    call_og_remove_fn(path)
+}
+
+unsafe fn valid_path_to_insert(path_c_str: &CStr) -> bool {
+    match path_c_str.to_str() {
+        Ok(path_str) => {
+            return !(path_str.starts_with("/proc/")
+                || path_str.contains("/usr/bin/ldd")
+                || path_str.contains("/dev/tty"));
+        }
+        Err(_) => {
+            println!("could not convert path to path_c_str");
+            return false;
+        }
+    }
 }
 
 unsafe fn add_path_to_db(path_c_str: &CStr) {
@@ -77,16 +99,10 @@ unsafe fn call_og_open_fn(path: *const c_char, oflag: c_int) -> i32 {
     original_open_fn(path, oflag)
 }
 
-unsafe fn valid_path_to_insert(path_c_str: &CStr) -> bool {
-    match path_c_str.to_str() {
-        Ok(path_str) => {
-            return !(path_str.starts_with("/proc/")
-                || path_str.contains("/usr/bin/ldd")
-                || path_str.contains("/dev/tty"));
-        }
-        Err(_) => {
-            println!("could not convert path to path_c_str");
-            return false;
-        }
-    }
+unsafe fn call_og_remove_fn(path: *const c_char) -> i32 {
+    let remove_c_string = CString::new("remove").expect("could not create C string for remove");
+    let original_remove_fn_address = dlsym(RTLD_NEXT, remove_c_string.as_ptr());
+    let original_remove_fn: RemoveFn = unsafe { transmute(original_remove_fn_address) };
+
+    original_remove_fn(path)
 }
