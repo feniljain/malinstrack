@@ -30,10 +30,9 @@ enum Actions {
 #[derive(Parser)]
 #[command(author = "feniljain", version = "0.0.1", about, long_about = None)]
 struct Args {
-    /// Turn debugging information on
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    debug: u8,
-
+    // /// Turn debugging information on
+    // #[arg(short, long, action = clap::ArgAction::Count)]
+    // debug: u8,
     #[command(subcommand)]
     action: Actions,
 }
@@ -58,11 +57,6 @@ fn main() -> anyhow::Result<()> {
     // - We run a de-duplication job after exec of given binary completes
 
     let args = Args::parse();
-
-    // [] TODO: Set debug mode
-    // [] TODO: Insert a check/cmd option to check deps:
-    // - sqlite3
-    // - gcc/clang
 
     #[allow(deprecated)]
     let home_dir_path = std::env::home_dir().expect("Expected home dir path");
@@ -159,7 +153,25 @@ fn main() -> anyhow::Result<()> {
             let _ = Command::new(bin_path_str).status();
         }
         Actions::ViewReport { identifier } => {
-            println!("Generating report for identifier: {identifier}");
+            println!("Listing accessed paths for {identifier}");
+
+            let tracking_dir_str = format!(".malinstrack/reports/{identifier}");
+
+            let tracking_dir_path = Path::join(&home_dir_path, Path::new(&tracking_dir_str));
+            let db_name = format!("{identifier}.db");
+            let tracking_db_path = Path::join(&tracking_dir_path, Path::new(&db_name));
+
+            let connection =
+                sqlite::open(tracking_db_path.clone()).expect("could not create or open DB");
+
+            let table_create_cmd = format!("SELECT * FROM {identifier}");
+            connection
+                .iterate(table_create_cmd, |row| {
+                    let path = row[0].1.expect("expected row to be present");
+                    println!("{}", path);
+                    return true;
+                })
+                .expect("could not fetch accessed paths");
         }
     }
 
@@ -181,7 +193,6 @@ fn check_deps() -> anyhow::Result<()> {
 }
 
 fn create_shared_object(new_build_so_path: PathBuf) -> anyhow::Result<()> {
-    // - [X] Get sample shared lib working with old examples
     // - TODO: [] Get it working with rust-installer.sh
 
     let curr_working_dir = env::current_dir()?;
@@ -204,7 +215,6 @@ fn create_shared_object(new_build_so_path: PathBuf) -> anyhow::Result<()> {
         .expect("could not move libmalinstrack.so to central dir");
 
     // TODO: [] Program a small check to see if it's working
-    // TODO: [] Add proper error handling in this function
 
     Ok(())
 }
