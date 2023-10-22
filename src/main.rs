@@ -4,7 +4,7 @@
 
 use std::{
     env, fs,
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -20,8 +20,8 @@ enum Actions {
     Track {
         /// unique identifier to link different scripts/apps to a single report
         identifier: String,
-        /// path of script/app to track
-        path: path::PathBuf,
+        /// cmd to track
+        cmd_str: String,
     },
     /// view report
     ViewReport { identifier: String },
@@ -91,13 +91,9 @@ fn main() -> anyhow::Result<()> {
             println!("let's track those malicious actors down!");
         }
         Actions::Track {
-            path: bin_path,
+            cmd_str,
             identifier,
         } => {
-            let bin_path_str = bin_path
-                .to_str()
-                .expect("could not print path, what did you pass bruhh");
-
             if identifier == "" {
                 println!("{}", "invalid identifier: {identifier}".red());
                 return Ok(());
@@ -143,14 +139,20 @@ fn main() -> anyhow::Result<()> {
             );
 
             println!(
-                "Starting to track identifier: {identifier} at path: {}",
-                bin_path_str
+                "Starting to track identifier: {identifier} cmd: {}",
+                cmd_str
             );
             println!("=============================================");
 
             // Don't care if this program succeeds or fails, that's program specific stuff
-            // let bin_path_str = format!("./{bin_path_str}");
-            let _ = Command::new(bin_path_str).status();
+
+            let mut cmd_splits = cmd_str.split_whitespace();
+            let root_cmd = cmd_splits.next().expect("could not separate root_cmd");
+            let mut cmd = Command::new(root_cmd);
+            cmd_splits.for_each(|ele| {
+                cmd.arg(ele);
+            });
+            let _ = cmd.status();
         }
         Actions::ViewReport { identifier } => {
             println!("Listing accessed paths for {identifier}");

@@ -52,7 +52,7 @@ unsafe fn add_path_to_db(path_c_str: &CStr) {
                             format!("INSERT INTO {db_name} VALUES({path_c_str:?})");
                         // println!("path_insert_cmd: {path_insert_cmd}");
                         if let Err(_) = connection.execute(path_insert_cmd) {
-                            println!("could not run insert into table cmd");
+                            // println!("could not run insert into table cmd");
                         }
                     }
                     None => {
