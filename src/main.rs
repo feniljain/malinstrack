@@ -68,6 +68,7 @@ fn main() -> anyhow::Result<()> {
     let home_dir_path = std::env::home_dir().expect("Expected home dir path");
     let reports_dir_path = Path::join(&home_dir_path, Path::new(".malinstrack/reports/"));
     let lib_dir_path = Path::join(&home_dir_path, Path::new(".malinstrack/lib/"));
+    let new_build_so_path = Path::join(&lib_dir_path, Path::new("libmalinstrack.so"));
 
     match args.action {
         Actions::Setup => {
@@ -88,8 +89,7 @@ fn main() -> anyhow::Result<()> {
 
             println!("=============================================");
             println!("finding gcc by asking for it's version, output:");
-            // TODO: Create shared object
-            create_shared_object(lib_dir_path)?;
+            create_shared_object(new_build_so_path)?;
             println!("=============================================");
             println!();
 
@@ -100,8 +100,6 @@ fn main() -> anyhow::Result<()> {
             path: bin_path,
             identifier,
         } => {
-            // TODO: [] Get your inspect_open program working here
-
             let bin_path_str = bin_path
                 .to_str()
                 .expect("could not print path, what did you pass bruhh");
@@ -111,30 +109,34 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            let tracking_dir_str = format!("~/.malinstrack/reports/{identifier}");
+            let tracking_dir_str = format!(".malinstrack/reports/{identifier}");
 
             let tracking_dir_path = Path::join(&home_dir_path, Path::new(&tracking_dir_str));
             let db_name = format!("{identifier}.db");
             let tracking_db_path = Path::join(&tracking_dir_path, Path::new(&db_name));
 
-            if let Err(_) = fs::try_exists(&tracking_dir_str) {
+            println!("tracking_db_path: {tracking_db_path:?}");
+
+            let connection: sqlite::Connection;
+
+            if let Ok(false) = fs::try_exists(&tracking_dir_str) {
                 fs::create_dir_all(tracking_dir_path)?;
 
-                Command::new("sqlite3")
-                    .args([tracking_db_path.clone()])
-                    .status()
-                    .expect("could not create new sqlite db");
-            }
+                // Making different sqlite DB for each program, so that results can
+                // be easily transported anywhere, more convenience to user
+                connection =
+                    sqlite::open(tracking_db_path.clone()).expect("could not create or open DB");
 
-            // Create project sqlite DB, if it does not exist for this identifier
-            // Set env vars
-            // - LD_PRELOAD
-            // - MALINSTRACK_DB_PATH
-            // run program
+                let table_create_cmd =
+                    format!("CREATE TABLE IF NOT EXISTS {identifier}(path TEXT, unique(path))");
+                connection
+                    .execute(table_create_cmd)
+                    .expect("could not run create table if not exists cmd");
+            }
 
             env::set_var(
                 "LD_PRELOAD",
-                lib_dir_path
+                new_build_so_path
                     .to_str()
                     .expect("could not convert lib dir path to str"),
             );
@@ -153,7 +155,8 @@ fn main() -> anyhow::Result<()> {
             println!("=============================================");
 
             // Don't care if this program succeeds or fails, that's program specific stuff
-            let _ = Command::new(format!("./{bin_path_str}")).status();
+            // let bin_path_str = format!("./{bin_path_str}");
+            let _ = Command::new(bin_path_str).status();
         }
         Actions::ViewReport { identifier } => {
             println!("Generating report for identifier: {identifier}");
@@ -177,7 +180,7 @@ fn check_deps() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn create_shared_object(lib_dir_path: PathBuf) -> anyhow::Result<()> {
+fn create_shared_object(new_build_so_path: PathBuf) -> anyhow::Result<()> {
     // - [X] Get sample shared lib working with old examples
     // - TODO: [] Get it working with rust-installer.sh
 
@@ -195,8 +198,6 @@ fn create_shared_object(lib_dir_path: PathBuf) -> anyhow::Result<()> {
         &so_project_dir,
         Path::new("target/release/libmalinstrack.so"),
     );
-
-    let new_build_so_path = Path::join(&lib_dir_path, Path::new("libmalinstrack.so"));
 
     // Place it in central dir
     fs::copy(built_so_path, new_build_so_path)
