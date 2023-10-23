@@ -63,7 +63,7 @@ unsafe fn add_path_to_db(path_c_str: &CStr) {
                 let db_path = Path::new(&db_path_str);
                 match db_path.file_stem() {
                     Some(db_file_name) => {
-                        let db_name = db_file_name
+                        let table_name = db_file_name
                             .to_str()
                             .expect("could not convert os str to str")
                             .split(".")
@@ -71,7 +71,7 @@ unsafe fn add_path_to_db(path_c_str: &CStr) {
                             .expect("could not fetch db name");
 
                         let path_insert_cmd =
-                            format!("INSERT INTO {db_name} VALUES({path_c_str:?})");
+                            format!("INSERT INTO {table_name} VALUES({path_c_str:?})");
                         // println!("path_insert_cmd: {path_insert_cmd}");
                         if let Err(_) = connection.execute(path_insert_cmd) {
                             // println!("could not run insert into table cmd");
@@ -106,3 +106,9 @@ unsafe fn call_og_remove_fn(path: *const c_char) -> i32 {
 
     original_remove_fn(path)
 }
+
+// Shared Library:
+// - Make functions to override syscalls
+// - They see what file is accessed/modified and append it to our file
+// - Parse app/script's linked libs and add them to our file too
+// - We run a de-duplication job after exec of given binary completes
