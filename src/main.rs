@@ -4,7 +4,7 @@
 
 use std::{
     env, fs,
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -20,8 +20,8 @@ enum Actions {
     Track {
         /// unique identifier to link different scripts/apps to a single report
         identifier: String,
-        /// path of script/app to track
-        path: path::PathBuf,
+        /// cmd to track
+        cmd_str: String,
     },
     /// view report
     ViewReport { identifier: String },
@@ -30,10 +30,9 @@ enum Actions {
 #[derive(Parser)]
 #[command(author = "feniljain", version = "0.0.1", about, long_about = None)]
 struct Args {
-    /// Turn debugging information on
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    debug: u8,
-
+    // /// Turn debugging information on
+    // #[arg(short, long, action = clap::ArgAction::Count)]
+    // debug: u8,
     #[command(subcommand)]
     action: Actions,
 }
@@ -51,18 +50,7 @@ fn main() -> anyhow::Result<()> {
     //     should definitely delete
     //     - Can show report in nice table: https://github.com/zhiburt/tabled
 
-    // Shared Library:
-    // - Make functions to override syscalls
-    // - They see what file is accessed/modified and append it to our file
-    // - Parse app/script's linked libs and add them to our file too
-    // - We run a de-duplication job after exec of given binary completes
-
     let args = Args::parse();
-
-    // [] TODO: Set debug mode
-    // [] TODO: Insert a check/cmd option to check deps:
-    // - sqlite3
-    // - gcc/clang
 
     #[allow(deprecated)]
     let home_dir_path = std::env::home_dir().expect("Expected home dir path");
@@ -97,25 +85,22 @@ fn main() -> anyhow::Result<()> {
             println!("let's track those malicious actors down!");
         }
         Actions::Track {
-            path: bin_path,
+            cmd_str,
             identifier,
         } => {
-            let bin_path_str = bin_path
-                .to_str()
-                .expect("could not print path, what did you pass bruhh");
-
             if identifier == "" {
                 println!("{}", "invalid identifier: {identifier}".red());
                 return Ok(());
             }
+
+            let mut cmd_splits = cmd_str.split_whitespace();
+            let root_cmd = cmd_splits.next().expect("could not separate root_cmd");
 
             let tracking_dir_str = format!(".malinstrack/reports/{identifier}");
 
             let tracking_dir_path = Path::join(&home_dir_path, Path::new(&tracking_dir_str));
             let db_name = format!("{identifier}.db");
             let tracking_db_path = Path::join(&tracking_dir_path, Path::new(&db_name));
-
-            println!("tracking_db_path: {tracking_db_path:?}");
 
             let connection: sqlite::Connection;
 
@@ -132,6 +117,8 @@ fn main() -> anyhow::Result<()> {
                 connection
                     .execute(table_create_cmd)
                     .expect("could not run create table if not exists cmd");
+
+                add_linked_shared_libs_to_db(connection, identifier.as_str(), root_cmd.to_string());
             }
 
             env::set_var(
@@ -149,17 +136,40 @@ fn main() -> anyhow::Result<()> {
             );
 
             println!(
-                "Starting to track identifier: {identifier} at path: {}",
-                bin_path_str
+                "Starting to track identifier: {identifier} cmd: {}",
+                cmd_str
             );
             println!("=============================================");
 
             // Don't care if this program succeeds or fails, that's program specific stuff
-            // let bin_path_str = format!("./{bin_path_str}");
-            let _ = Command::new(bin_path_str).status();
+
+            let mut cmd = Command::new(root_cmd);
+            cmd_splits.for_each(|ele| {
+                cmd.arg(ele);
+            });
+            let _ = cmd.status();
         }
         Actions::ViewReport { identifier } => {
-            println!("Generating report for identifier: {identifier}");
+            // TODO: Include `ldd` output too
+            println!("Listing accessed paths for {identifier}");
+
+            let tracking_dir_str = format!(".malinstrack/reports/{identifier}");
+
+            let tracking_dir_path = Path::join(&home_dir_path, Path::new(&tracking_dir_str));
+            let db_name = format!("{identifier}.db");
+            let tracking_db_path = Path::join(&tracking_dir_path, Path::new(&db_name));
+
+            let connection =
+                sqlite::open(tracking_db_path.clone()).expect("could not create or open DB");
+
+            let table_create_cmd = format!("SELECT * FROM {identifier}");
+            connection
+                .iterate(table_create_cmd, |row| {
+                    let path = row[0].1.expect("expected row to be present");
+                    println!("{}", path);
+                    return true;
+                })
+                .expect("could not fetch accessed paths");
         }
     }
 
@@ -181,9 +191,6 @@ fn check_deps() -> anyhow::Result<()> {
 }
 
 fn create_shared_object(new_build_so_path: PathBuf) -> anyhow::Result<()> {
-    // - [X] Get sample shared lib working with old examples
-    // - TODO: [] Get it working with rust-installer.sh
-
     let curr_working_dir = env::current_dir()?;
     let so_project_dir = Path::join(&curr_working_dir, Path::new("libmalinstrack/"));
     env::set_current_dir(so_project_dir.clone())?;
@@ -204,7 +211,77 @@ fn create_shared_object(new_build_so_path: PathBuf) -> anyhow::Result<()> {
         .expect("could not move libmalinstrack.so to central dir");
 
     // TODO: [] Program a small check to see if it's working
-    // TODO: [] Add proper error handling in this function
 
     Ok(())
+}
+
+fn add_linked_shared_libs_to_db(
+    connection: sqlite::Connection,
+    table_name: &str,
+    root_cmd: String,
+) {
+    let mut qualified_path = root_cmd.clone();
+
+    // detect fully qualified or unqualified path
+    if !root_cmd.starts_with("./") && !root_cmd.starts_with("../") && !root_cmd.starts_with("/") {
+        let which_cmd_stdout = Command::new("which")
+            .args([root_cmd])
+            .output()
+            .expect("could not run which command")
+            .stdout;
+
+        let which_cmd_stdout_str = String::from_utf8(which_cmd_stdout)
+            .expect("could not convert which cmd output to string");
+
+        qualified_path = which_cmd_stdout_str
+            .split("\n")
+            .next()
+            .expect("could not find any qualified paths, invalid command")
+            .to_string();
+    }
+
+    let ldd_cmd_stdout = Command::new("ldd")
+        .args([qualified_path])
+        .output()
+        .expect("could not run ldd command")
+        .stdout;
+
+    let ldd_cmd_stdout_str =
+        String::from_utf8(ldd_cmd_stdout).expect("could not convert ldd cmd output to string");
+
+    ldd_cmd_stdout_str.split("\n").for_each(|path| {
+        let trimmed_path = trim_ldd_row_to_only_path(path);
+        if is_needed_shared_lib_path(trimmed_path) {
+            let table_create_cmd = format!("INSERT INTO {table_name} VALUES({trimmed_path:?})");
+            connection
+                .execute(table_create_cmd)
+                .expect("could not run add one of the ldd given paths to db");
+        }
+    });
+}
+
+fn is_needed_shared_lib_path(path: &str) -> bool {
+    return !(path.starts_with("linux-vdso.so") || path.starts_with("libc.so") || path == "");
+}
+
+fn trim_ldd_row_to_only_path(path: &str) -> &str {
+    let mut row_segments = path.split("=>");
+
+    // for cases like: linux-vdso.so.1
+    // directly consider first given path
+    //
+    // for everything else consider second full path
+    let mut row_segment = row_segments
+        .next()
+        .expect("could not get first part of row");
+
+    if let Some(ele) = row_segments.next() {
+        row_segment = ele;
+    }
+
+    row_segment
+        .split("(")
+        .next()
+        .expect("could not split to get exact path")
+        .trim()
 }
